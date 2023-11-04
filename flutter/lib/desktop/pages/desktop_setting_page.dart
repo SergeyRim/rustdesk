@@ -1064,6 +1064,8 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
           title: 'ID/Relay Server',
           title_suffix: ServerConfigImportExportWidgets(controllers, errMsgs),
           children: [
+            Column(
+              children: [
             Obx(() => _LabeledTextField(context, 'ID Server', idController,
                 idErrMsg.value, false, secure)),
             Obx(() => _LabeledTextField(context, 'Relay Server',
