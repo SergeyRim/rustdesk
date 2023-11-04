@@ -2,7 +2,7 @@ lazy_static::lazy_static! {
 pub static ref T: std::collections::HashMap<&'static str, &'static str> =
     [
         ("Status", "Статус"),
-        ("Your Desktop", "Ваш рабочий стол"),
+        ("Your Desktop", "Ваш рабочий стол (ip4.by)"),
         ("desk_tip", "Ваш рабочий стол доступен с этим ID и паролем"),
         ("Password", "Пароль"),
         ("Ready", "Готово"),

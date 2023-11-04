@@ -1064,23 +1064,21 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
           title: 'ID/Relay Server',
           title_suffix: ServerConfigImportExportWidgets(controllers, errMsgs),
           children: [
-            Column(
-              children: [
-                Obx(() => _LabeledTextField(context, 'ID Server', idController,
-                    idErrMsg.value, enabled, secure)),
-                Obx(() => _LabeledTextField(context, 'Relay Server',
-                    relayController, relayErrMsg.value, enabled, secure)),
-                Obx(() => _LabeledTextField(context, 'API Server',
-                    apiController, apiErrMsg.value, enabled, secure)),
-                _LabeledTextField(
-                    context, 'Key', keyController, '', enabled, secure),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [_Button('Apply', submit, enabled: enabled)],
-                ).marginOnly(top: 10),
-              ],
-            )
-          ]);
+            Obx(() => _LabeledTextField(context, 'ID Server', idController,
+                idErrMsg.value, false, secure)),
+            Obx(() => _LabeledTextField(context, 'Relay Server',
+                relayController, relayErrMsg.value, false, secure)),
+            Obx(() => _LabeledTextField(context, 'API Server', apiController,
+                apiErrMsg.value, false, secure)),
+            _LabeledTextField(
+                context, 'Key', keyController, '', false, secure),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [_Button('Apply', submit, enabled: false)],
+            ).marginOnly(top: 10),
+          ],
+        )
+      ]);
     }
 
     return tmpWrapper();
