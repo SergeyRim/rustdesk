@@ -1,13 +1,14 @@
 // original cm window in Sciter version.
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_hbb/common/widgets/audio_input.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
+import 'package:flutter_hbb/models/cm_file_model.dart';
 import 'package:flutter_hbb/utils/platform_channel.dart';
 import 'package:get/get.dart';
 import 'package:percent_indicator/linear_percent_indicator.dart';
@@ -51,7 +52,7 @@ class _DesktopServerPageState extends State<DesktopServerPage>
   @override
   void onWindowClose() {
     Future.wait([gFFI.serverModel.closeAll(), gFFI.close()]).then((_) {
-      if (Platform.isMacOS) {
+      if (isMacOS) {
         RdPlatformChannel.instance.terminate();
       } else {
         windowManager.setPreventClose(false);
@@ -76,14 +77,20 @@ class _DesktopServerPageState extends State<DesktopServerPage>
         ChangeNotifierProvider.value(value: gFFI.chatModel),
       ],
       child: Consumer<ServerModel>(
-        builder: (context, serverModel, child) => Container(
-          decoration: BoxDecoration(
-              border: Border.all(color: MyTheme.color(context).border!)),
-          child: Scaffold(
+        builder: (context, serverModel, child) {
+          final body = Scaffold(
             backgroundColor: Theme.of(context).scaffoldBackgroundColor,
             body: ConnectionManager(),
-          ),
-        ),
+          );
+          return isLinux
+              ? buildVirtualWindowFrame(context, body)
+              : Container(
+                  decoration: BoxDecoration(
+                      border:
+                          Border.all(color: MyTheme.color(context).border!)),
+                  child: body,
+                );
+        },
       ),
     );
   }
@@ -157,7 +164,7 @@ class ConnectionManagerState extends State<ConnectionManager> {
               controller: serverModel.tabController,
               selectedBorderColor: MyTheme.accent,
               maxLabelWidth: 100,
-              tail: buildScrollJumper(),
+              tail: null, //buildScrollJumper(),
               selectedTabBackgroundColor:
                   Theme.of(context).hintColor.withOpacity(0),
               tabBuilder: (key, icon, label, themeConf) {
@@ -282,9 +289,9 @@ class ConnectionManagerState extends State<ConnectionManager> {
       windowManager.close();
       return true;
     } else {
-      final opt = "enable-confirm-closing-tabs";
       final bool res;
-      if (!option2bool(opt, bind.mainGetLocalOption(key: opt))) {
+      if (!option2bool(kOptionEnableConfirmClosingTabs,
+          bind.mainGetLocalOption(key: kOptionEnableConfirmClosingTabs))) {
         res = true;
       } else {
         res = await closeConfirmDialog();
@@ -326,11 +333,7 @@ class _AppIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       margin: EdgeInsets.symmetric(horizontal: 4.0),
-      child: SvgPicture.asset(
-        'assets/logo.svg',
-        width: 30,
-        height: 30,
-      ),
+      child: loadIcon(30),
     );
   }
 }
@@ -482,8 +485,8 @@ class _CmHeaderState extends State<_CmHeader>
                     client.type_() != ClientType.file),
             child: IconButton(
               onPressed: () => checkClickTime(client.id, () {
-                if (client.type_() != ClientType.file) {
-                  gFFI.chatModel.toggleCMSidePage();
+                if (client.type_() == ClientType.file) {
+                  gFFI.chatModel.toggleCMFilePage();
                 } else {
                   gFFI.chatModel
                       .toggleCMChatPage(MessageKey(client.peerId, client.id));
@@ -519,6 +522,7 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
       Function(bool)? onTap, String tooltipText) {
     return Tooltip(
       message: "$tooltipText: ${enabled ? "ON" : "OFF"}",
+      waitDuration: Duration.zero,
       child: Container(
         decoration: BoxDecoration(
           color: enabled ? MyTheme.accent : Colors.grey[700],
@@ -535,7 +539,6 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
                 child: Icon(
                   iconData,
                   color: Colors.white,
-                  size: 32,
                 ),
               ),
             ],
@@ -547,9 +550,11 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
 
   @override
   Widget build(BuildContext context) {
+    final crossAxisCount = 4;
+    final spacing = 10.0;
     return Container(
       width: double.infinity,
-      height: 200.0,
+      height: 160.0,
       margin: EdgeInsets.all(5.0),
       padding: EdgeInsets.all(5.0),
       decoration: BoxDecoration(
@@ -574,10 +579,10 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
           ).marginOnly(left: 4.0, bottom: 8.0),
           Expanded(
             child: GridView.count(
-              crossAxisCount: 3,
-              padding: EdgeInsets.symmetric(horizontal: 20.0),
-              mainAxisSpacing: 20.0,
-              crossAxisSpacing: 20.0,
+              crossAxisCount: crossAxisCount,
+              padding: EdgeInsets.symmetric(horizontal: spacing),
+              mainAxisSpacing: spacing,
+              crossAxisSpacing: spacing,
               children: [
                 buildPermissionIcon(
                   client.keyboard,
@@ -589,7 +594,7 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
                       client.keyboard = enabled;
                     });
                   },
-                  translate('Allow using keyboard and mouse'),
+                  translate('Enable keyboard/mouse'),
                 ),
                 buildPermissionIcon(
                   client.clipboard,
@@ -601,7 +606,7 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
                       client.clipboard = enabled;
                     });
                   },
-                  translate('Allow using clipboard'),
+                  translate('Enable clipboard'),
                 ),
                 buildPermissionIcon(
                   client.audio,
@@ -613,7 +618,7 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
                       client.audio = enabled;
                     });
                   },
-                  translate('Allow hearing sound'),
+                  translate('Enable audio'),
                 ),
                 buildPermissionIcon(
                   client.file,
@@ -625,7 +630,7 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
                       client.file = enabled;
                     });
                   },
-                  translate('Allow file copy and paste'),
+                  translate('Enable file copy and paste'),
                 ),
                 buildPermissionIcon(
                   client.restart,
@@ -637,7 +642,7 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
                       client.restart = enabled;
                     });
                   },
-                  translate('Allow remote restart'),
+                  translate('Enable remote restart'),
                 ),
                 buildPermissionIcon(
                   client.recording,
@@ -649,8 +654,24 @@ class _PrivilegeBoardState extends State<_PrivilegeBoard> {
                       client.recording = enabled;
                     });
                   },
-                  translate('Allow recording session'),
-                )
+                  translate('Enable recording session'),
+                ),
+                // only windows support block input
+                if (isWindows)
+                  buildPermissionIcon(
+                    client.blockInput,
+                    Icons.block,
+                    (enabled) {
+                      bind.cmSwitchPermission(
+                          connId: client.id,
+                          name: "block_input",
+                          enabled: enabled);
+                      setState(() {
+                        client.blockInput = enabled;
+                      });
+                    },
+                    translate('Enable blocking user input'),
+                  )
               ],
             ),
           ),
@@ -687,17 +708,86 @@ class _CmControlPanel extends StatelessWidget {
       children: [
         Offstage(
           offstage: !client.inVoiceCall,
-          child: buildButton(
-            context,
-            color: Colors.red,
-            onClick: () => closeVoiceCall(),
-            icon: Icon(
-              Icons.call_end_rounded,
-              color: Colors.white,
-              size: 14,
-            ),
-            text: "Stop voice call",
-            textColor: Colors.white,
+          child: Row(
+            children: [
+              Expanded(
+                child: buildButton(context,
+                    color: MyTheme.accent,
+                    onClick: null, onTapDown: (details) async {
+                  final devicesInfo = await AudioInput.getDevicesInfo();
+                  List<String> devices = devicesInfo['devices'] as List<String>;
+                  if (devices.isEmpty) {
+                    msgBox(
+                      gFFI.sessionId,
+                      'custom-nocancel-info',
+                      'Prompt',
+                      'no_audio_input_device_tip',
+                      '',
+                      gFFI.dialogManager,
+                    );
+                    return;
+                  }
+
+                  String currentDevice = devicesInfo['current'] as String;
+                  final x = details.globalPosition.dx;
+                  final y = details.globalPosition.dy;
+                  final position = RelativeRect.fromLTRB(x, y, x, y);
+                  showMenu(
+                    context: context,
+                    position: position,
+                    items: devices
+                        .map((d) => PopupMenuItem<String>(
+                              value: d,
+                              height: 18,
+                              padding: EdgeInsets.zero,
+                              onTap: () => AudioInput.setDevice(d),
+                              child: IgnorePointer(
+                                  child: RadioMenuButton(
+                                value: d,
+                                groupValue: currentDevice,
+                                onChanged: (v) {
+                                  if (v != null) AudioInput.setDevice(v);
+                                },
+                                child: Container(
+                                  child: Text(
+                                    d,
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                  ),
+                                  constraints: BoxConstraints(
+                                      maxWidth:
+                                          kConnectionManagerWindowSizeClosedChat
+                                                  .width -
+                                              80),
+                                ),
+                              )),
+                            ))
+                        .toList(),
+                  );
+                },
+                    icon: Icon(
+                      Icons.call_rounded,
+                      color: Colors.white,
+                      size: 14,
+                    ),
+                    text: "Audio input",
+                    textColor: Colors.white),
+              ),
+              Expanded(
+                child: buildButton(
+                  context,
+                  color: Colors.red,
+                  onClick: () => closeVoiceCall(),
+                  icon: Icon(
+                    Icons.call_end_rounded,
+                    color: Colors.white,
+                    size: 14,
+                  ),
+                  text: "Stop voice call",
+                  textColor: Colors.white,
+                ),
+              )
+            ],
           ),
         ),
         Offstage(
@@ -858,12 +948,14 @@ class _CmControlPanel extends StatelessWidget {
 
   Widget buildButton(BuildContext context,
       {required Color? color,
-      required Function() onClick,
-      Icon? icon,
+      GestureTapCallback? onClick,
+      Widget? icon,
       BoxBorder? border,
       required String text,
       required Color? textColor,
-      String? tooltip}) {
+      String? tooltip,
+      GestureTapDownCallback? onTapDown}) {
+    assert(!(onClick == null && onTapDown == null));
     Widget textWidget;
     if (icon != null) {
       textWidget = Text(
@@ -887,7 +979,16 @@ class _CmControlPanel extends StatelessWidget {
           color: color, borderRadius: borderRadius, border: border),
       child: InkWell(
         borderRadius: borderRadius,
-        onTap: () => checkClickTime(client.id, onClick),
+        onTap: () {
+          if (onClick == null) return;
+          checkClickTime(client.id, onClick);
+        },
+        onTapDown: (details) {
+          if (onTapDown == null) return;
+          checkClickTime(client.id, () {
+            onTapDown.call(details);
+          });
+        },
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -975,6 +1076,49 @@ class __FileTransferLogPageState extends State<_FileTransferLogPage> {
     );
   }
 
+  iconLabel(CmFileLog item) {
+    switch (item.action) {
+      case CmFileAction.none:
+        return Container();
+      case CmFileAction.localToRemote:
+      case CmFileAction.remoteToLocal:
+        return Column(
+          children: [
+            Transform.rotate(
+              angle: item.action == CmFileAction.remoteToLocal ? 0 : pi,
+              child: SvgPicture.asset(
+                "assets/arrow.svg",
+                colorFilter: svgColor(Theme.of(context).tabBarTheme.labelColor),
+              ),
+            ),
+            Text(item.action == CmFileAction.remoteToLocal
+                ? translate('Send')
+                : translate('Receive'))
+          ],
+        );
+      case CmFileAction.remove:
+        return Column(
+          children: [
+            Icon(
+              Icons.delete,
+              color: Theme.of(context).tabBarTheme.labelColor,
+            ),
+            Text(translate('Delete'))
+          ],
+        );
+      case CmFileAction.createDir:
+        return Column(
+          children: [
+            Icon(
+              Icons.create_new_folder,
+              color: Theme.of(context).tabBarTheme.labelColor,
+            ),
+            Text(translate('Create Folder'))
+          ],
+        );
+    }
+  }
+
   Widget statusList() {
     return PreferredSize(
       preferredSize: const Size(200, double.infinity),
@@ -983,7 +1127,7 @@ class __FileTransferLogPageState extends State<_FileTransferLogPage> {
           child: Obx(
             () {
               final jobTable = gFFI.cmFileModel.currentJobTable;
-              statusListView(List<JobProgress> jobs) => ListView.builder(
+              statusListView(List<CmFileLog> jobs) => ListView.builder(
                     controller: ScrollController(),
                     itemBuilder: (BuildContext context, int index) {
                       final item = jobs[index];
@@ -998,22 +1142,7 @@ class __FileTransferLogPageState extends State<_FileTransferLogPage> {
                                 children: [
                                   SizedBox(
                                     width: 50,
-                                    child: Column(
-                                      children: [
-                                        Transform.rotate(
-                                          angle: item.isRemoteToLocal ? 0 : pi,
-                                          child: SvgPicture.asset(
-                                            "assets/arrow.svg",
-                                            color: Theme.of(context)
-                                                .tabBarTheme
-                                                .labelColor,
-                                          ),
-                                        ),
-                                        Text(item.isRemoteToLocal
-                                            ? translate('Send')
-                                            : translate('Receive'))
-                                      ],
-                                    ),
+                                    child: iconLabel(item),
                                   ).paddingOnly(left: 15),
                                   const SizedBox(
                                     width: 16.0,
@@ -1048,8 +1177,9 @@ class __FileTransferLogPageState extends State<_FileTransferLogPage> {
                                             ),
                                           ),
                                         Offstage(
-                                          offstage:
-                                              item.state == JobState.inProgress,
+                                          offstage: !(item.isTransfer() &&
+                                              item.state !=
+                                                  JobState.inProgress),
                                           child: Text(
                                             translate(
                                               item.display(),
@@ -1106,13 +1236,14 @@ class __FileTransferLogPageState extends State<_FileTransferLogPage> {
                           children: [
                             SvgPicture.asset(
                               "assets/transfer.svg",
-                              color: Theme.of(context).tabBarTheme.labelColor,
+                              colorFilter: svgColor(
+                                  Theme.of(context).tabBarTheme.labelColor),
                               height: 40,
                             ).paddingOnly(bottom: 10),
                             Text(
                               translate("No transfers in progress"),
                               textAlign: TextAlign.center,
-                              textScaleFactor: 1.20,
+                              textScaler: TextScaler.linear(1.20),
                               style: TextStyle(
                                   color:
                                       Theme.of(context).tabBarTheme.labelColor),

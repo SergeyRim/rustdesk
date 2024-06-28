@@ -8,9 +8,10 @@ import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/mobile/widgets/gesture_help.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_keyboard_visibility/flutter_keyboard_visibility.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
-import 'package:wakelock/wakelock.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../common.dart';
 import '../../common/widgets/overlay.dart';
@@ -20,13 +21,17 @@ import '../../models/input_model.dart';
 import '../../models/model.dart';
 import '../../models/platform_model.dart';
 import '../../utils/image.dart';
+import '../widgets/dialog.dart';
 
 final initText = '1' * 1024;
 
 class RemotePage extends StatefulWidget {
-  RemotePage({Key? key, required this.id}) : super(key: key);
+  RemotePage({Key? key, required this.id, this.password, this.isSharedPassword})
+      : super(key: key);
 
   final String id;
+  final String? password;
+  final bool? isSharedPassword;
 
   @override
   State<RemotePage> createState() => _RemotePageState();
@@ -53,15 +58,21 @@ class _RemotePageState extends State<RemotePage> {
   @override
   void initState() {
     super.initState();
-    gFFI.start(widget.id);
+    gFFI.ffiModel.updateEventListener(sessionId, widget.id);
+    gFFI.start(
+      widget.id,
+      password: widget.password,
+      isSharedPassword: widget.isSharedPassword,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: []);
       gFFI.dialogManager
           .showLoading(translate('Connecting...'), onCancel: closeConnection);
     });
-    Wakelock.enable();
+    if (!isWeb) {
+      WakelockPlus.enable();
+    }
     _physicalFocusNode.requestFocus();
-    gFFI.ffiModel.updateEventListener(sessionId, widget.id);
     gFFI.inputModel.listenToMouse(true);
     gFFI.qualityMonitorModel.checkShowQualityMonitor(sessionId);
     keyboardSubscription =
@@ -69,16 +80,19 @@ class _RemotePageState extends State<RemotePage> {
     initSharedStates(widget.id);
     gFFI.chatModel
         .changeCurrentKey(MessageKey(widget.id, ChatModel.clientModeID));
-
+    gFFI.chatModel.voiceCallStatus.value = VoiceCallStatus.notStarted;
     _blockableOverlayState.applyFfi(gFFI);
+    gFFI.dialogManager.loadMobileActionsOverlayVisible();
   }
 
   @override
   Future<void> dispose() async {
     // https://github.com/flutter/flutter/issues/64935
     super.dispose();
-    gFFI.dialogManager.hideMobileActionsOverlay();
+    gFFI.dialogManager.hideMobileActionsOverlay(store: false);
     gFFI.inputModel.listenToMouse(false);
+    gFFI.imageModel.disposeImage();
+    gFFI.cursorModel.disposeImages();
     await gFFI.invokeMethod("enable_soft_keyboard", true);
     _mobileFocusNode.dispose();
     _physicalFocusNode.dispose();
@@ -87,9 +101,15 @@ class _RemotePageState extends State<RemotePage> {
     gFFI.dialogManager.dismissAll();
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
         overlays: SystemUiOverlay.values);
-    await Wakelock.disable();
+    if (!isWeb) {
+      await WakelockPlus.disable();
+    }
     await keyboardSubscription.cancel();
     removeSharedStates(widget.id);
+    // `on_voice_call_closed` should be called when the connection is ended.
+    // The inner logic of `on_voice_call_closed` will check if the voice call is active.
+    // Only one client is considered here for now.
+    gFFI.chatModel.onVoiceCallClosed("End connetion");
   }
 
   // to-do: It should be better to use transparent color instead of the bgColor.
@@ -113,6 +133,13 @@ class _RemotePageState extends State<RemotePage> {
           gFFI.ffiModel.pi.version.isNotEmpty) {
         gFFI.invokeMethod("enable_soft_keyboard", false);
       }
+    } else {
+      _timer?.cancel();
+      _timer = Timer(kMobileDelaySoftKeyboardFocus, () {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
+            overlays: SystemUiOverlay.values);
+        _mobileFocusNode.requestFocus();
+      });
     }
     // update for Scaffold
     setState(() {});
@@ -202,12 +229,12 @@ class _RemotePageState extends State<RemotePage> {
     _value = initText;
     setState(() => _showEdit = false);
     _timer?.cancel();
-    _timer = Timer(Duration(milliseconds: 30), () {
+    _timer = Timer(kMobileDelaySoftKeyboard, () {
       // show now, and sleep a while to requestFocus to
-      // make sure edit ready, so that keyboard wont show/hide/show/hide happen
+      // make sure edit ready, so that keyboard won't show/hide/show/hide happen
       setState(() => _showEdit = true);
       _timer?.cancel();
-      _timer = Timer(Duration(milliseconds: 30), () {
+      _timer = Timer(kMobileDelaySoftKeyboardFocus, () {
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
             overlays: SystemUiOverlay.values);
         _mobileFocusNode.requestFocus();
@@ -234,7 +261,7 @@ class _RemotePageState extends State<RemotePage> {
         clientClose(sessionId, gFFI.dialogManager);
         return false;
       },
-      child: getRawPointerAndKeyBody(Scaffold(
+      child: Scaffold(
           // workaround for https://github.com/rustdesk/rustdesk/issues/3131
           floatingActionButtonLocation: keyboardIsVisible
               ? FABLocation(FloatingActionButtonLocation.endFloat, 0, -35)
@@ -280,25 +307,26 @@ class _RemotePageState extends State<RemotePage> {
                       : Offstage(),
                 ],
               )),
-          body: Overlay(
-            initialEntries: [
-              OverlayEntry(builder: (context) {
-                return Container(
-                    color: Colors.black,
+          body: Obx(
+            () => getRawPointerAndKeyBody(Overlay(
+              initialEntries: [
+                OverlayEntry(builder: (context) {
+                  return Container(
+                    color: kColorCanvas,
                     child: isWebDesktop
                         ? getBodyForDesktopWithListener(keyboard)
-                        : SafeArea(child:
-                            OrientationBuilder(builder: (ctx, orientation) {
-                            if (_currentOrientation != orientation) {
-                              Timer(const Duration(milliseconds: 200), () {
-                                gFFI.dialogManager
-                                    .resetMobileActionsOverlay(ffi: gFFI);
-                                _currentOrientation = orientation;
-                                gFFI.canvasModel.updateViewStyle();
-                              });
-                            }
-                            return Obx(
-                              () => Container(
+                        : SafeArea(
+                            child:
+                                OrientationBuilder(builder: (ctx, orientation) {
+                              if (_currentOrientation != orientation) {
+                                Timer(const Duration(milliseconds: 200), () {
+                                  gFFI.dialogManager
+                                      .resetMobileActionsOverlay(ffi: gFFI);
+                                  _currentOrientation = orientation;
+                                  gFFI.canvasModel.updateViewStyle();
+                                });
+                              }
+                              return Container(
                                 color: MyTheme.canvasColor,
                                 child: inputModel.isPhysicalMouse.value
                                     ? getBodyForMobile()
@@ -306,12 +334,14 @@ class _RemotePageState extends State<RemotePage> {
                                         child: getBodyForMobile(),
                                         ffi: gFFI,
                                       ),
-                              ),
-                            );
-                          })));
-              })
-            ],
-          ))),
+                              );
+                            }),
+                          ),
+                  );
+                })
+              ],
+            )),
+          )),
     );
   }
 
@@ -347,9 +377,7 @@ class _RemotePageState extends State<RemotePage> {
                       onPressed: () {
                         clientClose(sessionId, gFFI.dialogManager);
                       },
-                    )
-                  ] +
-                  <Widget>[
+                    ),
                     IconButton(
                       color: Colors.white,
                       icon: Icon(Icons.tv),
@@ -363,6 +391,10 @@ class _RemotePageState extends State<RemotePage> {
                       ? []
                       : gFFI.ffiModel.isPeerAndroid
                           ? [
+                              IconButton(
+                                  color: Colors.white,
+                                  icon: Icon(Icons.keyboard),
+                                  onPressed: openKeyboard),
                               IconButton(
                                 color: Colors.white,
                                 icon: const Icon(Icons.build),
@@ -387,15 +419,21 @@ class _RemotePageState extends State<RemotePage> {
                   (isWeb
                       ? []
                       : <Widget>[
-                          IconButton(
-                            color: Colors.white,
-                            icon: Icon(Icons.message),
-                            onPressed: () {
-                              gFFI.chatModel.changeCurrentKey(MessageKey(
-                                  widget.id, ChatModel.clientModeID));
-                              gFFI.chatModel.toggleChatOverlay();
-                            },
-                          )
+                          futureBuilder(
+                              future: gFFI.invokeMethod(
+                                  "get_value", "KEY_IS_SUPPORT_VOICE_CALL"),
+                              hasData: (isSupportVoiceCall) => IconButton(
+                                    color: Colors.white,
+                                    icon: isAndroid && isSupportVoiceCall
+                                        ? SvgPicture.asset('assets/chat.svg',
+                                            colorFilter: ColorFilter.mode(
+                                                Colors.white, BlendMode.srcIn))
+                                        : Icon(Icons.message),
+                                    onPressed: () =>
+                                        isAndroid && isSupportVoiceCall
+                                            ? showChatOptions(widget.id)
+                                            : onPressedTextChat(widget.id),
+                                  ))
                         ]) +
                   [
                     IconButton(
@@ -445,7 +483,11 @@ class _RemotePageState extends State<RemotePage> {
                   : TextFormField(
                       textInputAction: TextInputAction.newline,
                       autocorrect: false,
-                      enableSuggestions: false,
+                      // Flutter 3.16.9 Android.
+                      // `enableSuggestions` causes secure keyboard to be shown.
+                      // https://github.com/flutter/flutter/issues/139143
+                      // https://github.com/flutter/flutter/issues/146540
+                      // enableSuggestions: false,
                       autofocus: true,
                       focusNode: _mobileFocusNode,
                       maxLines: null,
@@ -481,10 +523,23 @@ class _RemotePageState extends State<RemotePage> {
     final x = 120.0;
     final y = size.height;
     final menus = toolbarControls(context, id, gFFI);
+    getChild(TTextMenu menu) {
+      if (menu.trailingIcon != null) {
+        return Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              menu.child,
+              menu.trailingIcon!,
+            ]);
+      } else {
+        return menu.child;
+      }
+    }
+
     final more = menus
         .asMap()
         .entries
-        .map((e) => PopupMenuItem<int>(child: e.value.child, value: e.key))
+        .map((e) => PopupMenuItem<int>(child: getChild(e.value), value: e.key))
         .toList();
     () async {
       var index = await showMenu(
@@ -499,6 +554,88 @@ class _RemotePageState extends State<RemotePage> {
     }();
   }
 
+  onPressedTextChat(String id) {
+    gFFI.chatModel.changeCurrentKey(MessageKey(id, ChatModel.clientModeID));
+    gFFI.chatModel.toggleChatOverlay();
+  }
+
+  showChatOptions(String id) async {
+    onPressVoiceCall() => bind.sessionRequestVoiceCall(sessionId: sessionId);
+    onPressEndVoiceCall() => bind.sessionCloseVoiceCall(sessionId: sessionId);
+
+    makeTextMenu(String label, Widget icon, VoidCallback onPressed,
+            {TextStyle? labelStyle}) =>
+        TTextMenu(
+          child: Text(translate(label), style: labelStyle),
+          trailingIcon: Transform.scale(
+            scale: (isDesktop || isWebDesktop) ? 0.8 : 1,
+            child: IconButton(
+              onPressed: onPressed,
+              icon: icon,
+            ),
+          ),
+          onPressed: onPressed,
+        );
+
+    final isInVoice = [
+      VoiceCallStatus.waitingForResponse,
+      VoiceCallStatus.connected
+    ].contains(gFFI.chatModel.voiceCallStatus.value);
+    final menus = [
+      makeTextMenu('Text chat', Icon(Icons.message, color: MyTheme.accent),
+          () => onPressedTextChat(widget.id)),
+      isInVoice
+          ? makeTextMenu(
+              'End voice call',
+              SvgPicture.asset(
+                'assets/call_wait.svg',
+                colorFilter:
+                    ColorFilter.mode(Colors.redAccent, BlendMode.srcIn),
+              ),
+              onPressEndVoiceCall,
+              labelStyle: TextStyle(color: Colors.redAccent))
+          : makeTextMenu(
+              'Voice call',
+              SvgPicture.asset(
+                'assets/call_wait.svg',
+                colorFilter: ColorFilter.mode(MyTheme.accent, BlendMode.srcIn),
+              ),
+              onPressVoiceCall),
+    ];
+    getChild(TTextMenu menu) {
+      if (menu.trailingIcon != null) {
+        return Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              menu.child,
+              menu.trailingIcon!,
+            ]);
+      } else {
+        return menu.child;
+      }
+    }
+
+    final menuItems = menus
+        .asMap()
+        .entries
+        .map((e) => PopupMenuItem<int>(child: getChild(e.value), value: e.key))
+        .toList();
+    Future.delayed(Duration.zero, () async {
+      final size = MediaQuery.of(context).size;
+      final x = 120.0;
+      final y = size.height;
+      var index = await showMenu(
+        context: context,
+        position: RelativeRect.fromLTRB(x, y, x, y),
+        items: menuItems,
+        elevation: 8,
+      );
+      if (index != null && index < menus.length) {
+        menus[index].onPressed.call();
+      }
+    });
+  }
+
   /// aka changeTouchMode
   BottomAppBar getGestureHelp() {
     return BottomAppBar(
@@ -511,7 +648,7 @@ class _RemotePageState extends State<RemotePage> {
                   gFFI.ffiModel.toggleTouchMode();
                   final v = gFFI.ffiModel.touchMode ? 'Y' : '';
                   bind.sessionPeerOption(
-                      sessionId: sessionId, name: "touch-mode", value: v);
+                      sessionId: sessionId, name: kOptionTouchMode, value: v);
                 })));
   }
 
@@ -550,6 +687,7 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
   var _fn = false;
   var _pin = false;
   final _keyboardVisibilityController = KeyboardVisibilityController();
+  final _key = GlobalKey();
 
   InputModel get inputModel => gFFI.inputModel;
 
@@ -575,6 +713,24 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
   }
 
   @override
+  void initState() {
+    super.initState();
+  }
+
+  _updateRect() {
+    RenderObject? renderObject = _key.currentContext?.findRenderObject();
+    if (renderObject == null) {
+      return;
+    }
+    if (renderObject is RenderBox) {
+      final size = renderObject.size;
+      Offset pos = renderObject.localToGlobal(Offset.zero);
+      gFFI.cursorModel.keyHelpToolsVisibilityChanged(
+          Rect.fromLTWH(pos.dx, pos.dy, size.width, size.height));
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final hasModifierOn = inputModel.ctrl ||
         inputModel.alt ||
@@ -582,6 +738,7 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
         inputModel.command;
 
     if (!_pin && !hasModifierOn && !widget.requestShow) {
+      gFFI.cursorModel.keyHelpToolsVisibilityChanged(null);
       return Offstage();
     }
     final size = MediaQuery.of(context).size;
@@ -692,7 +849,12 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
       }),
     ];
     final space = size.width > 320 ? 4.0 : 2.0;
+    // 500 ms is long enough for this widget to be built!
+    Future.delayed(Duration(milliseconds: 500), () {
+      _updateRect();
+    });
     return Container(
+        key: _key,
         color: Color(0xAA000000),
         padding: EdgeInsets.only(
             top: _keyboardVisibilityController.isVisible ? 24 : 4, bottom: 8),
@@ -755,14 +917,14 @@ void showOptions(
   if (image != null) {
     displays.add(Padding(padding: const EdgeInsets.only(top: 8), child: image));
   }
-  if (pi.displays.length > 1) {
+  if (pi.displays.length > 1 && pi.currentDisplay != kAllDisplayValue) {
     final cur = pi.currentDisplay;
     final children = <Widget>[];
     for (var i = 0; i < pi.displays.length; ++i) {
       children.add(InkWell(
           onTap: () {
             if (i == cur) return;
-            bind.sessionSwitchDisplay(sessionId: gFFI.sessionId, value: i);
+            openMonitorInTheSameTab(i, gFFI, pi);
             gFFI.dialogManager.dismissAll();
           },
           child: Ink(
@@ -772,7 +934,7 @@ void showOptions(
                   border: Border.all(color: Theme.of(context).hintColor),
                   borderRadius: BorderRadius.circular(2),
                   color: i == cur
-                      ? Theme.of(context).toggleableActiveColor.withOpacity(0.6)
+                      ? Theme.of(context).primaryColor.withOpacity(0.6)
                       : null),
               child: Center(
                   child: Text((i + 1).toString(),
@@ -797,8 +959,19 @@ void showOptions(
   List<TRadioMenu<String>> imageQualityRadios =
       await toolbarImageQuality(context, id, gFFI);
   List<TRadioMenu<String>> codecRadios = await toolbarCodec(context, id, gFFI);
+  List<TToggleMenu> cursorToggles = await toolbarCursor(context, id, gFFI);
   List<TToggleMenu> displayToggles =
       await toolbarDisplayToggle(context, id, gFFI);
+
+  List<TToggleMenu> privacyModeList = [];
+  // privacy mode
+  final privacyModeState = PrivacyModeState.find(id);
+  if (gFFI.ffiModel.keyboard && gFFI.ffiModel.pi.features.privacyMode) {
+    privacyModeList = toolbarPrivacyMode(privacyModeState, context, id, gFFI);
+    if (privacyModeList.length == 1) {
+      displayToggles.add(privacyModeList[0]);
+    }
+  }
 
   dialogManager.show((setState, close, context) {
     var viewStyle =
@@ -827,8 +1000,23 @@ void showOptions(
             })),
       if (codecRadios.isNotEmpty) const Divider(color: MyTheme.border),
     ];
+    final rxCursorToggleValues = cursorToggles.map((e) => e.value.obs).toList();
+    final cursorTogglesList = cursorToggles
+        .asMap()
+        .entries
+        .map((e) => Obx(() => CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            visualDensity: VisualDensity.compact,
+            value: rxCursorToggleValues[e.key].value,
+            onChanged: (v) {
+              e.value.onChanged?.call(v);
+              if (v != null) rxCursorToggleValues[e.key].value = v;
+            },
+            title: e.value.child)))
+        .toList();
+
     final rxToggleValues = displayToggles.map((e) => e.value.obs).toList();
-    final toggles = displayToggles
+    final displayTogglesList = displayToggles
         .asMap()
         .entries
         .map((e) => Obx(() => CheckboxListTile(
@@ -841,11 +1029,27 @@ void showOptions(
             },
             title: e.value.child)))
         .toList();
+    final toggles = [
+      ...cursorTogglesList,
+      if (cursorToggles.isNotEmpty) const Divider(color: MyTheme.border),
+      ...displayTogglesList,
+    ];
+
+    Widget privacyModeWidget = Offstage();
+    if (privacyModeList.length > 1) {
+      privacyModeWidget = ListTile(
+        contentPadding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        title: Text(translate('Privacy mode')),
+        onTap: () => setPrivacyModeDialog(
+            dialogManager, privacyModeList, privacyModeState),
+      );
+    }
 
     return CustomAlertDialog(
       content: Column(
           mainAxisSize: MainAxisSize.min,
-          children: displays + radios + toggles),
+          children: displays + radios + toggles + [privacyModeWidget]),
     );
   }, clickMaskDismiss: true, backDismiss: true);
 }
