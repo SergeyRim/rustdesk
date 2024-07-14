@@ -89,7 +89,7 @@ sys-locale = "0.3"
 enigo = { path = "libs/enigo", features = [ "with_serde" ] }
 clipboard = { path = "libs/clipboard" }
 ctrlc = "3.2"
-arboard = { git = "https://github.com/fufesou/arboard", branch = "feat/image_svg", features = ["wayland-data-control"] }
+arboard = { git = "https://github.com/rustdesk-org/arboard", features = ["wayland-data-control", "image-data"] }
 system_shutdown = "4.0"
 qrcode-generator = "4.1"
 
