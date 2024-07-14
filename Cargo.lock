@@ -260,7 +260,7 @@ dependencies = [
 
 [[package]]
 name = "arboard"
-version = "3.3.1"
+version = "3.4.0"
 source = "git+https://github.com/fufesou/arboard?branch=feat/image_svg"
 dependencies = [
  "clipboard-win",
