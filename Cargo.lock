@@ -261,20 +261,20 @@ dependencies = [
 [[package]]
 name = "arboard"
 version = "3.4.0"
-source = "git+https://github.com/fufesou/arboard?branch=feat/image_svg"
+source = "git+https://github.com/rustdesk-org/arboard#27b4e503caa70ec6306e5270461429f2cf907ad6"
 dependencies = [
  "clipboard-win",
- "core-graphics 0.23.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "image",
+ "core-graphics 0.23.2",
+ "image 0.25.1",
  "log",
- "objc",
- "objc-foundation",
- "objc_id",
+ "objc2 0.5.2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "parking_lot",
- "thiserror",
+ "resvg",
  "windows-sys 0.48.0",
  "wl-clipboard-rs",
- "x11rb 0.13.0",
+ "x11rb 0.13.1",
 ]
 
 [[package]]
