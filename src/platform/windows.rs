@@ -2294,7 +2294,7 @@ fn get_license() -> Option<CustomServer> {
         lic = tmp;
     } else {
         // for back compatibility from migrating from <= 1.2.1 to 1.2.2
-        lic.key = get_reg("Key");
+        lic.key = hbb_common::config::RS_PUB_KEY.to_owned();
         lic.host = get_reg("Host");
         lic.api = get_reg("Api");
     }
